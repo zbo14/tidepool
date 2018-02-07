@@ -1,3 +1,11 @@
+.benchmarks
+build
+.cache
+dist
 .DS_Store
+*.egg
+*.egg-info
+.eggs
 *__pycache__
 *.pyc
+.pytest_cache
