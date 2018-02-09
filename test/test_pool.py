@@ -1,29 +1,54 @@
 import pytest
 import unittest
+from bs4 import BeautifulSoup
+from contextlib import closing
+from test.data import nums, urls
 from random import randint
-from tidepool import Cache
-from tidepool import Pool
+from requests import get
+from tidepool import Cache, Pool
 from time import sleep
 
-def add_to_total(state, res):
-    state['total'] += res
+def add_to_total(state, num):
+    state['total'] += num
+
+def add_text(state, text):
+    state['texts'].append(text)
 
 def cube(x):
-    sleep(0.001)
     return x * x * x
 
-def sum_of_cubes(data):
-    return sum([cube(x) for x in data])
+## adapted from https://realpython.com/blog/python/python-web-scraping-practical-introduction/
+
+def get_text(url):
+    try:
+        with closing(get(url, stream=True)) as resp:
+            content_type = resp.headers['Content-Type'].lower()
+            if resp.status_code != 200:
+                raise Exception('expected 200 status_code, got ' + resp.status_code)
+            elif 'html' not in content_type:
+                raise Exception('expected html content_type, got ' + content_type)
+            else:
+                html = BeautifulSoup(resp.content, 'html.parser')
+                return html.get_text()
+    except Exception as e:
+        print('Error in request to {0} : {1}'.format(url, str(e)))
+        return None
+
+def sum_of_cubes(nums):
+    return sum([cube(x) for x in nums])
+
+def get_texts(urls):
+    return [get_text(url) for url in urls]
 
 def expected_type_error():
     raise Exception('expected TypeError')
 
 def new_pool():
     return Pool(
-        f=cube, 
+        f=get_text, 
         num_procs=4, 
-        state={'total': 0}, 
-        update=add_to_total
+        state={'texts': []}, 
+        update=add_text
     )
 
 def new_pool_with_cache():
@@ -38,25 +63,20 @@ def new_pool_with_cache():
 class TestPool(unittest.TestCase):
 
     def setUp(self):
-        self.data = [randint(0, 10) for _ in range(1000)]
-        total = sum_of_cubes(self.data)
-        self.state = {'total': total}
         self.pool = new_pool()
-        self.pool_cache = new_pool_with_cache()
+        self.pool_with_cache = new_pool_with_cache()
 
     def tearDown(self):
         assert True == self.pool.shutdown()
-        assert True == self.pool_cache.shutdown()
+        assert True == self.pool_with_cache.shutdown()
 
     def test_pool_without_cache(self):
-        res = self.pool.run(self.data)
-        self.assertEqual(res, True)
-        self.assertEqual(self.pool.state, self.state)
+        assert True == self.pool.run(urls)
+        assert len(self.pool.state['texts']) == len(urls)
 
     def test_pool_with_cache(self):
-        res = self.pool_cache.run(self.data)
-        self.assertEqual(res, True)
-        self.assertEqual(self.pool_cache.state, self.state)
+        assert True == self.pool_with_cache.run(nums)
+        assert self.pool_with_cache.state['total'] == sum_of_cubes(nums)
 
 def test_bad_pool_args_(**kwargs):
     try:
@@ -89,20 +109,31 @@ class TestBadArgs(unittest.TestCase):
 
 ## Benchmark
 
-data = [randint(0, 10) for _ in range(1000)]
-pool = new_pool_with_cache()
-total = sum_of_cubes(data)
+pool = new_pool()
+pool_with_cache = new_pool_with_cache()
+total = sum_of_cubes(nums)
 
-def run_pool(pool, data, total):
-    assert True == pool.run(data)
+def run_pool_with_cache(pool, nums, total):
+    assert True == pool.run(nums)
     assert total == pool.state['total']
     pool.state['total'] = 0
 
-def test_pool(benchmark):
-    benchmark(run_pool, pool, data, total)
+def test_pool_with_cache(benchmark):
+    benchmark(run_pool_with_cache, pool_with_cache, nums, total)
 
 def test_sum_of_cubes(benchmark):
-    benchmark(sum_of_cubes, data)
+    benchmark(sum_of_cubes, nums)
+
+def run_pool(pool, urls):
+    assert True == pool.run(urls)
+    assert len(urls) == len(pool.state['texts'])
+    pool.state['texts'] = []
+
+def test_pool(benchmark):
+    benchmark(run_pool, pool, urls)
+
+def test_get_texts(benchmark):
+    benchmark(get_texts, urls)
 
 if __name__ == '__main__':
     unittest.main()
